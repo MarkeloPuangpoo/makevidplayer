@@ -5,7 +5,7 @@ import Hls from 'hls.js';
 import {
     Play, Pause, Volume2, VolumeX, Maximize, Settings, Info,
     Check, ChevronRight, ChevronLeft, PictureInPicture, Loader2,
-    Rewind, FastForward
+    Rewind, FastForward, MessageCircle, Mic2
 } from 'lucide-react';
 import { useVideoStats } from '@/hooks/useVideoStats';
 
@@ -18,6 +18,12 @@ interface QualityLevel {
     id: number;
     height: number;
     bitrate: number;
+}
+
+interface MediaTrack {
+    id: number;
+    name: string;
+    lang?: string;
 }
 
 export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
@@ -37,13 +43,20 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
     // Overlays State
     const [showStats, setShowStats] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
+    const [showTracks, setShowTracks] = useState(false); // New Tracks Menu
     const [activeMenu, setActiveMenu] = useState<'main' | 'quality' | 'speed'>('main');
     const [seekAnimation, setSeekAnimation] = useState<'forward' | 'backward' | null>(null);
 
     // Settings State
     const [qualities, setQualities] = useState<QualityLevel[]>([]);
-    const [currentQuality, setCurrentQuality] = useState(-1); // -1 = Auto
+    const [currentQuality, setCurrentQuality] = useState(-1);
     const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
+
+    // Tracks State
+    const [audioTracks, setAudioTracks] = useState<MediaTrack[]>([]);
+    const [currentAudio, setCurrentAudio] = useState(-1);
+    const [subtitles, setSubtitles] = useState<MediaTrack[]>([]);
+    const [currentSubtitle, setCurrentSubtitle] = useState(-1);
 
     // Use our custom stats hook
     const stats = useVideoStats(videoRef, hlsRef, isPlaying);
@@ -57,21 +70,46 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
             const hls = new Hls({
                 capLevelToPlayerSize: true,
                 debug: false,
+                enableWorker: true,
             });
             hlsRef.current = hls;
             hls.loadSource(src);
             hls.attachMedia(video);
 
-            hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
-                const levels = data.levels.map((level, index) => ({
+            hls.on(Hls.Events.MANIFEST_PARSED, (event: any, data: any) => {
+                // Quality Levels
+                const levels = data.levels.map((level: any, index: number) => ({
                     id: index,
                     height: level.height,
                     bitrate: level.bitrate
-                }));
-                setQualities(levels.sort((a, b) => b.height - a.height));
+                })).sort((a: any, b: any) => b.height - a.height);
+                setQualities(levels);
             });
 
-            hls.on(Hls.Events.ERROR, (event, data) => {
+            hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (event: any, data: any) => {
+                // Audio Tracks
+                const audios = hls.audioTracks.map((track, index) => ({
+                    id: index,
+                    name: track.name,
+                    lang: track.lang
+                }));
+                setAudioTracks(audios);
+                setCurrentAudio(hls.audioTrack);
+            });
+
+            hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (event: any, data: any) => {
+                // Subtitle Tracks
+                const subs = hls.subtitleTracks.map((track, index) => ({
+                    id: index,
+                    name: track.name,
+                    lang: track.lang
+                }));
+                setSubtitles(subs);
+                setCurrentSubtitle(hls.subtitleTrack);
+            });
+
+
+            hls.on(Hls.Events.ERROR, (event: any, data: any) => {
                 if (data.fatal) {
                     switch (data.type) {
                         case Hls.ErrorTypes.NETWORK_ERROR:
@@ -108,7 +146,7 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
         const handlePlay = () => setIsPlaying(true);
         const handlePause = () => setIsPlaying(false);
         const handleWaiting = () => setIsBuffering(true);
-        const handleCanPlay = () => setIsBuffering(false); // Playing or ready to play
+        const handleCanPlay = () => setIsBuffering(false);
         const handlePlaying = () => setIsBuffering(false);
 
         video.addEventListener('timeupdate', handleTimeUpdate);
@@ -186,59 +224,30 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
     // Keyboard Shortcuts
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            // Ignore if user is typing in an input
             if ((e.target as HTMLElement).tagName === 'INPUT') return;
-
             switch (e.key.toLowerCase()) {
                 case ' ':
-                case 'k':
-                    e.preventDefault();
-                    togglePlay();
-                    break;
-                case 'f':
-                    e.preventDefault();
-                    toggleFullscreen();
-                    break;
-                case 'm':
-                    e.preventDefault();
-                    toggleMute();
-                    break;
-                case 'arrowleft':
-                    e.preventDefault();
-                    seekRelative(-5);
-                    break;
-                case 'arrowright':
-                    e.preventDefault();
-                    seekRelative(5);
-                    break;
-                case 'arrowup':
-                    e.preventDefault();
-                    changeVolume(0.1);
-                    break;
-                case 'arrowdown':
-                    e.preventDefault();
-                    changeVolume(-0.1);
-                    break;
+                case 'k': e.preventDefault(); togglePlay(); break;
+                case 'f': e.preventDefault(); toggleFullscreen(); break;
+                case 'm': e.preventDefault(); toggleMute(); break;
+                case 'arrowleft': e.preventDefault(); seekRelative(-5); break;
+                case 'arrowright': e.preventDefault(); seekRelative(5); break;
+                case 'arrowup': e.preventDefault(); changeVolume(0.1); break;
+                case 'arrowdown': e.preventDefault(); changeVolume(-0.1); break;
             }
         };
-
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [togglePlay, toggleFullscreen, toggleMute, seekRelative, changeVolume]);
 
-
-    // Double Click Seek Hander
     const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>, direction: 'forward' | 'backward') => {
         e.stopPropagation();
         const seconds = direction === 'forward' ? 10 : -10;
         seekRelative(seconds);
-
-        // Trigger Animation
         setSeekAnimation(direction);
         setTimeout(() => setSeekAnimation(null), 500);
     };
 
-    // Other Handlers
     const handleVolumeInteract = (e: React.ChangeEvent<HTMLInputElement>) => {
         const newVol = parseFloat(e.target.value);
         setVolume(newVol);
@@ -256,13 +265,12 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
         }
     };
 
-    // Settings Helpers
+    // Settings & Tracks Logic
     const changeQuality = (levelId: number) => {
         if (hlsRef.current) {
             hlsRef.current.currentLevel = levelId;
             setCurrentQuality(levelId);
             setShowSettings(false);
-            setActiveMenu('main');
         }
     };
 
@@ -271,7 +279,22 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
             videoRef.current.playbackRate = speed;
             setPlaybackSpeed(speed);
             setShowSettings(false);
-            setActiveMenu('main');
+        }
+    };
+
+    const changeAudio = (trackId: number) => {
+        if (hlsRef.current) {
+            hlsRef.current.audioTrack = trackId;
+            setCurrentAudio(trackId);
+            setShowTracks(false);
+        }
+    };
+
+    const changeSubtitle = (trackId: number) => {
+        if (hlsRef.current) {
+            hlsRef.current.subtitleTrack = trackId;
+            setCurrentSubtitle(trackId);
+            setShowTracks(false);
         }
     };
 
@@ -288,7 +311,6 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
             onMouseEnter={() => setIsHovering(true)}
             onMouseLeave={() => setIsHovering(false)}
         >
-            {/* Video Element */}
             <video
                 ref={videoRef}
                 poster={poster}
@@ -297,33 +319,26 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
                 playsInline
             />
 
-            {/* Buffering Spinner */}
             {isBuffering && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
                     <Loader2 className="w-12 h-12 text-white animate-spin opacity-80" />
                 </div>
             )}
 
-            {/* Double Click Interaction Layer */}
+            {/* Seek Zones */}
             <div className="absolute inset-0 z-10 flex">
-                {/* Rewind Zone */}
                 <div
                     className="w-1/3 h-full flex items-center justify-center opacity-0 hover:opacity-0 transition-opacity"
                     onDoubleClick={(e) => handleDoubleClick(e, 'backward')}
-                ></div>
-                {/* Center Zone (Play/Pause could go here but we use single click on video) */}
-                <div
-                    className="w-1/3 h-full"
-                    onClick={togglePlay}
                 />
-                {/* Forward Zone */}
+                <div className="w-1/3 h-full" onClick={togglePlay} />
                 <div
                     className="w-1/3 h-full flex items-center justify-center opacity-0 hover:opacity-0 transition-opacity"
                     onDoubleClick={(e) => handleDoubleClick(e, 'forward')}
-                ></div>
+                />
             </div>
 
-            {/* Seek Animation Overlay */}
+            {/* Seek Animation */}
             {seekAnimation && (
                 <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none">
                     <div className={`bg-black/50 p-4 rounded-full backdrop-blur-md animate-in fade-in zoom-in duration-300 flex flex-col items-center ${seekAnimation === 'forward' ? 'translate-x-32' : '-translate-x-32'
@@ -334,7 +349,7 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
                 </div>
             )}
 
-            {/* Stats for Nerds Overlay - Apple/Linear Style */}
+            {/* Stats Overlay */}
             {showStats && (
                 <div className="absolute top-6 left-6 z-50 animate-in fade-in slide-in-from-top-2 duration-300">
                     <div className="bg-black/60 backdrop-blur-xl border border-white/10 rounded-2xl p-5 shadow-2xl min-w-[320px]">
@@ -396,6 +411,54 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
                                 <span className="text-white/50 truncare max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap">{stats.url}</span>
                             </div>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Tracks Menu Popup (Audio & Subtitles) */}
+            {showTracks && (
+                <div className="absolute bottom-16 right-16 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                    <div className="bg-black/80 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl w-64 overflow-hidden py-2 max-h-80 overflow-y-auto">
+
+                        {/* Audio Section */}
+                        <div className="px-4 py-2 border-b border-white/5 mb-1 text-xs font-bold text-white/50 uppercase tracking-widest sticky top-0 bg-black/80 backdrop-blur-xl">
+                            Audio
+                        </div>
+                        {audioTracks.length === 0 && <div className="px-4 py-2 text-sm text-white/30 italic">No audio tracks</div>}
+                        {audioTracks.map((track) => (
+                            <button
+                                key={track.id}
+                                onClick={() => changeAudio(track.id)}
+                                className="w-full flex items-center justify-between px-4 py-2 hover:bg-white/10 transition-colors text-sm text-white"
+                            >
+                                <span>{track.name || `Track ${track.id + 1}`}</span>
+                                {currentAudio === track.id && <Check size={14} className="text-green-500" />}
+                            </button>
+                        ))}
+
+                        {/* Subtitles Section */}
+                        <div className="px-4 py-2 border-b border-white/5 mb-1 mt-2 text-xs font-bold text-white/50 uppercase tracking-widest sticky top-0 bg-black/80 backdrop-blur-xl">
+                            Subtitles
+                        </div>
+
+                        <button
+                            onClick={() => changeSubtitle(-1)}
+                            className="w-full flex items-center justify-between px-4 py-2 hover:bg-white/10 transition-colors text-sm text-white"
+                        >
+                            <span>Off</span>
+                            {currentSubtitle === -1 && <Check size={14} className="text-green-500" />}
+                        </button>
+
+                        {subtitles.map((track) => (
+                            <button
+                                key={track.id}
+                                onClick={() => changeSubtitle(track.id)}
+                                className="w-full flex items-center justify-between px-4 py-2 hover:bg-white/10 transition-colors text-sm text-white"
+                            >
+                                <span>{track.name}</span>
+                                {currentSubtitle === track.id && <Check size={14} className="text-green-500" />}
+                            </button>
+                        ))}
                     </div>
                 </div>
             )}
@@ -482,7 +545,6 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
                 className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-4 pb-4 pt-12 transition-opacity duration-300 z-40 ${isHovering || !isPlaying ? 'opacity-100' : 'opacity-0'
                     }`}
             >
-                {/* Progress Bar */}
                 <div className="relative w-full h-1 group/progress mb-4 cursor-pointer">
                     <input
                         type="range"
@@ -504,7 +566,6 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
                     />
                 </div>
 
-                {/* Buttons Row */}
                 <div className="flex items-center justify-between text-white">
                     <div className="flex items-center gap-4">
                         <button
@@ -543,13 +604,29 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
                             <PictureInPicture size={20} />
                         </button>
 
+                        {/* Audio & Subtitles Button */}
                         <button
-                            onClick={() => setShowSettings(!showSettings)}
+                            onClick={() => {
+                                setShowTracks(!showTracks);
+                                setShowSettings(false);
+                            }}
+                            className={`p-1.5 rounded-full transition-all ${showTracks ? 'bg-white/10 text-white' : 'hover:bg-white/10 text-gray-300'
+                                }`}
+                            title="Audio & Subtitles"
+                        >
+                            <MessageCircle size={20} />
+                        </button>
+
+                        <button
+                            onClick={() => {
+                                setShowSettings(!showSettings);
+                                setShowTracks(false);
+                            }}
                             className={`p-1.5 rounded-full transition-all ${showSettings ? 'bg-white/10 text-white' : 'hover:bg-white/10 text-gray-300'
                                 }`}
                             title="Settings"
                         >
-                            <Settings size={18} />
+                            <Settings size={20} />
                         </button>
 
                         <button
@@ -558,7 +635,7 @@ export default function VideoPlayer({ src, poster }: VideoPlayerProps) {
                                 }`}
                             title="Stats for Nerds"
                         >
-                            <Info size={18} />
+                            <Info size={20} />
                         </button>
 
                         <button
